@@ -47,6 +47,10 @@ def load_models():
         ("Decision Tree",       "decision_tree.pkl",        False),
         ("SVM",                 "svm.pkl",                  True),
         ("KNN",                 "knn.pkl",                  True),
+        ("Random Forest",       "random_forest.pkl",        False),
+        ("XGBoost",             "xgboost.pkl",              False),
+        ("Random Forest",       "random_forest.pkl",        False),
+        ("XGBoost",             "xgboost.pkl",              False),
     ]:
         path = f"models/{fname}"
         if os.path.exists(path):
