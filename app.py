@@ -11,37 +11,48 @@ import seaborn as sns
 import joblib
 import os
 
-# ── Page config ──────────────────────────────────────────────────────────────
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Churn Prediction Dashboard",
     page_icon="📊",
     layout="wide",
 )
 
+# ── Required columns for a valid upload ──────────────────────────────────────
+REQUIRED_COLS = [
+    "Age", "Gender", "Income", "MaritalStatus", "Dependents",
+    "Tenure", "ContractType", "SubscriptionPlan", "MonthlyCharges",
+    "TotalCharges", "PaymentMethod", "AutoPay",
+    "MonthlyUsageHours", "LoginFrequency", "FeatureUsageScore",
+    "CustomerSupportCalls", "ServiceComplaints", "AppRating",
+    "DiscountReceived", "LastInteractionDays", "ContractRenewalReminder",
+    "UpgradeAttempts", "Churn"
+]
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 @st.cache_data
 def load_data():
-    df_raw = pd.read_csv("data/customers.csv")
-    X_test = pd.read_csv("data/X_test.csv")
+    df_raw  = pd.read_csv("data/customers.csv")
+    X_test  = pd.read_csv("data/X_test.csv")
     X_test_s = pd.read_csv("data/X_test_scaled.csv")
-    y_test = pd.read_csv("data/y_test.csv").squeeze()
+    y_test  = pd.read_csv("data/y_test.csv").squeeze()
     return df_raw, X_test, X_test_s, y_test
 
 @st.cache_resource
 def load_models():
     models = {}
     for name, fname, scaled in [
-        ("Linear Regression",  "linear_regression.pkl",  True),
-        ("Logistic Regression","logistic_regression.pkl", True),
-        ("Decision Tree",      "decision_tree.pkl",       False),
-        ("SVM",                "svm.pkl",                 True),
-        ("KNN",                "knn.pkl",                 True),
+        ("Linear Regression",   "linear_regression.pkl",   True),
+        ("Logistic Regression", "logistic_regression.pkl", True),
+        ("Decision Tree",       "decision_tree.pkl",        False),
+        ("SVM",                 "svm.pkl",                  True),
+        ("KNN",                 "knn.pkl",                  True),
     ]:
         path = f"models/{fname}"
         if os.path.exists(path):
             models[name] = (joblib.load(path), scaled)
-    kmeans   = joblib.load("models/kmeans.pkl")   if os.path.exists("models/kmeans.pkl")   else None
-    scaler   = joblib.load("data/scaler.pkl")     if os.path.exists("data/scaler.pkl")     else None
+    kmeans = joblib.load("models/kmeans.pkl") if os.path.exists("models/kmeans.pkl") else None
+    scaler = joblib.load("data/scaler.pkl")   if os.path.exists("data/scaler.pkl")   else None
     return models, kmeans, scaler
 
 @st.cache_data
@@ -50,30 +61,82 @@ def load_results():
     clus = pd.read_csv("models/cluster_summary.csv", index_col=0) if os.path.exists("models/cluster_summary.csv") else None
     return comp, clus
 
-# ── Check if trained ──────────────────────────────────────────────────────────
+# ── State flags ───────────────────────────────────────────────────────────────
 data_ready  = os.path.exists("data/customers.csv")
 model_ready = os.path.exists("models/model_comparison.csv")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 st.sidebar.title("🔄 Pipeline Control")
 
-if st.sidebar.button("1️⃣  Generate Dataset", use_container_width=True):
-    with st.spinner("Generating 10,000 customers..."):
-        os.makedirs("data", exist_ok=True)
-        import generate_dataset
-        df = generate_dataset.generate_dataset()
-        df.to_csv("data/customers.csv", index=False)
-        st.sidebar.success(f"Dataset ready! Churn rate: {df['Churn'].mean():.1%}")
-        st.cache_data.clear()
+# ── DATA SOURCE TOGGLE ────────────────────────────────────────────────────────
+st.sidebar.subheader("📂 Data Source")
+data_source = st.sidebar.radio(
+    "Choose how to load data:",
+    ["🔧 Generate synthetic data", "📤 Upload my own CSV"],
+    label_visibility="collapsed"
+)
 
-if st.sidebar.button("2️⃣  Preprocess Data", use_container_width=True, disabled=not data_ready):
+if data_source == "🔧 Generate synthetic data":
+    if st.sidebar.button("1️⃣  Generate Dataset", use_container_width=True):
+        with st.spinner("Generating 10,000 customers..."):
+            os.makedirs("data", exist_ok=True)
+            import generate_dataset
+            df = generate_dataset.generate_dataset()
+            df.to_csv("data/customers.csv", index=False)
+            st.sidebar.success(f"Dataset ready! Churn rate: {df['Churn'].mean():.1%}")
+            st.cache_data.clear()
+
+else:  # Upload CSV
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload a CSV file", type=["csv"],
+        help="Must contain the required columns — see the template below."
+    )
+
+    # Template download
+    template_cols = REQUIRED_COLS
+    template_df = pd.DataFrame(columns=template_cols)
+    template_csv = template_df.to_csv(index=False)
+    st.sidebar.download_button(
+        label="⬇️  Download CSV template",
+        data=template_csv,
+        file_name="churn_template.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
+
+    if uploaded_file is not None:
+        try:
+            df_uploaded = pd.read_csv(uploaded_file)
+            missing = [c for c in REQUIRED_COLS if c not in df_uploaded.columns]
+            if missing:
+                st.sidebar.error(f"Missing columns: {', '.join(missing)}")
+            else:
+                os.makedirs("data", exist_ok=True)
+                # Keep only known columns + CustomerID if present
+                keep = [c for c in df_uploaded.columns if c in REQUIRED_COLS + ["CustomerID", "City"]]
+                df_uploaded[keep].to_csv("data/customers.csv", index=False)
+                churn_rate = df_uploaded["Churn"].mean()
+                st.sidebar.success(
+                    f"✅ Uploaded {len(df_uploaded):,} rows — "
+                    f"Churn rate: {churn_rate:.1%}"
+                )
+                st.cache_data.clear()
+                data_ready = True
+        except Exception as e:
+            st.sidebar.error(f"Could not read file: {e}")
+
+st.sidebar.divider()
+
+if st.sidebar.button("2️⃣  Preprocess Data", use_container_width=True,
+                     disabled=not os.path.exists("data/customers.csv")):
     with st.spinner("Preprocessing..."):
         import preprocessing
         preprocessing.preprocess()
         st.sidebar.success("Preprocessing complete!")
         st.cache_data.clear()
 
-if st.sidebar.button("3️⃣  Train All Models", use_container_width=True, disabled=not os.path.exists("data/X_train.csv")):
+if st.sidebar.button("3️⃣  Train All Models", use_container_width=True,
+                     disabled=not os.path.exists("data/X_train.csv")):
     with st.spinner("Training models (SVM may take ~60s)..."):
         import train_models
         train_models.train_all()
@@ -96,15 +159,29 @@ if page == "🏠 Overview":
     st.title("📊 Customer Churn Prediction System")
     st.markdown("AI-powered churn prediction for telecom/subscription services.")
 
-    if not data_ready:
-        st.info("👈 Click **Generate Dataset** in the sidebar to get started.")
+    if not os.path.exists("data/customers.csv"):
+        st.info("👈 Choose a data source in the sidebar to get started.")
+
+        # Show required columns as a reference
+        with st.expander("📋 Required CSV columns (if uploading your own data)"):
+            st.write("Your CSV must contain these columns:")
+            col_df = pd.DataFrame({
+                "Column": REQUIRED_COLS,
+                "Type": ["int", "str", "int", "str", "int",
+                         "int", "str", "str", "float", "float",
+                         "str", "str", "float", "int", "float",
+                         "int", "int", "float", "str", "int",
+                         "str", "int", "int (0/1)"]
+            })
+            st.dataframe(col_df, use_container_width=True, hide_index=True)
     else:
         df_raw, *_ = load_data()
+        source_label = "Uploaded" if data_source == "📤 Upload my own CSV" else "Synthetic"
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Customers", f"{len(df_raw):,}")
         c2.metric("Churn Rate", f"{df_raw['Churn'].mean():.1%}")
-        c3.metric("Features", "24")
-        c4.metric("Models Trained", "5 + K-Means")
+        c3.metric("Data Source", source_label)
+        c4.metric("Models Trained", "5 + K-Means" if model_ready else "Not yet")
 
         st.divider()
         col1, col2 = st.columns(2)
@@ -124,17 +201,18 @@ if page == "🏠 Overview":
 # ── Page: EDA ────────────────────────────────────────────────────────────────
 elif page == "🔍 EDA":
     st.title("🔍 Exploratory Data Analysis")
-    if not data_ready:
-        st.warning("Generate dataset first.")
+    if not os.path.exists("data/customers.csv"):
+        st.warning("Load data first (generate or upload).")
     else:
         df_raw, *_ = load_data()
 
         tab1, tab2, tab3 = st.tabs(["Distributions", "Correlations", "Churn Drivers"])
 
         with tab1:
-            col = st.selectbox("Select numeric feature", ["Age", "Tenure", "MonthlyCharges",
+            available_numeric = [c for c in ["Age", "Tenure", "MonthlyCharges",
                 "MonthlyUsageHours", "LoginFrequency", "AppRating",
-                "CustomerSupportCalls", "ServiceComplaints"])
+                "CustomerSupportCalls", "ServiceComplaints"] if c in df_raw.columns]
+            col = st.selectbox("Select numeric feature", available_numeric)
             fig, axes = plt.subplots(1, 2, figsize=(10, 3))
             df_raw[col].hist(bins=30, ax=axes[0], color="#2196F3", edgecolor="white")
             axes[0].set_title(f"{col} Distribution")
@@ -158,7 +236,8 @@ elif page == "🔍 EDA":
 
         with tab3:
             st.subheader("Churn Rate by Key Categorical Features")
-            for feat in ["ContractType", "SubscriptionPlan", "AutoPay"]:
+            cat_feats = [f for f in ["ContractType", "SubscriptionPlan", "AutoPay"] if f in df_raw.columns]
+            for feat in cat_feats:
                 fig, ax = plt.subplots(figsize=(6, 2.5))
                 grouped = df_raw.groupby(feat)["Churn"].mean().sort_values(ascending=False)
                 grouped.plot(kind="bar", ax=ax, color="#FF7043", edgecolor="white")
@@ -183,20 +262,19 @@ elif page == "🤖 Model Comparison":
         metrics = ["accuracy", "precision", "recall", "f1_score", "roc_auc"]
 
         st.subheader("📋 Results Table")
-        styled = comp[["model"] + metrics].copy()
         st.dataframe(
-            styled.style.background_gradient(subset=metrics, cmap="YlGn"),
+            comp[["model"] + metrics].style.background_gradient(subset=metrics, cmap="YlGn"),
             use_container_width=True, hide_index=True
         )
 
-        st.subheader("📈 Metric Radar")
+        st.subheader("📈 Metric Comparison")
         selected_metric = st.selectbox("Compare by metric", metrics)
         fig, ax = plt.subplots(figsize=(8, 4))
         colors = ["#2196F3", "#4CAF50", "#FF9800", "#F44336", "#9C27B0"]
         bars = ax.barh(comp["model"], comp[selected_metric], color=colors)
         ax.set_xlim(0, 1)
         ax.set_xlabel(selected_metric.replace("_", " ").title())
-        ax.set_title(f"Model Comparison – {selected_metric.replace('_',' ').title()}")
+        ax.set_title(f"Model Comparison – {selected_metric.replace('_', ' ').title()}")
         for bar, val in zip(bars, comp[selected_metric]):
             ax.text(val + 0.005, bar.get_y() + bar.get_height()/2,
                     f"{val:.3f}", va="center", fontsize=9)
@@ -225,7 +303,6 @@ elif page == "📊 Confusion Matrices":
                     y_pred = (model.predict(X_input) >= 0.5).astype(int)
                 else:
                     y_pred = model.predict(X_input)
-                # Always recompute CM directly from predictions
                 from sklearn.metrics import confusion_matrix as sk_cm
                 cm = sk_cm(y_test, y_pred)
             except Exception as e:
@@ -254,17 +331,19 @@ elif page == "👥 Customer Segments":
             st.subheader("Cluster Summary")
             st.dataframe(clus, use_container_width=True)
 
-            segment_colors = {"Loyal Customers": "#4CAF50",
-                              "High-Value Customers": "#2196F3",
-                              "At-Risk Customers": "#FF9800",
-                              "Churn-Risk Customers": "#F44336"}
-
+            segment_colors = {
+                "Loyal Customers":       "#4CAF50",
+                "High-Value Customers":  "#2196F3",
+                "At-Risk Customers":     "#FF9800",
+                "Churn-Risk Customers":  "#F44336"
+            }
             col1, col2 = st.columns(2)
+            labels = clus["Label"].tolist()
+            sizes  = clus["CustomerCount"].tolist()
+            colors = [segment_colors.get(l, "#9E9E9E") for l in labels]
+
             with col1:
                 fig, ax = plt.subplots(figsize=(5, 4))
-                labels = clus["Label"].tolist()
-                sizes  = clus["CustomerCount"].tolist()
-                colors = [segment_colors.get(l, "#9E9E9E") for l in labels]
                 ax.pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%", startangle=90)
                 ax.set_title("Segment Distribution")
                 st.pyplot(fig)
@@ -272,9 +351,8 @@ elif page == "👥 Customer Segments":
 
             with col2:
                 fig, ax = plt.subplots(figsize=(5, 4))
-                x = range(len(clus))
-                ax.bar(x, clus["ChurnRate"], color=colors)
-                ax.set_xticks(list(x))
+                ax.bar(range(len(clus)), clus["ChurnRate"], color=colors)
+                ax.set_xticks(list(range(len(clus))))
                 ax.set_xticklabels(labels, rotation=15, ha="right", fontsize=8)
                 ax.set_ylabel("Churn Rate")
                 ax.set_title("Churn Rate per Segment")
@@ -294,58 +372,48 @@ elif page == "🎯 Predict Single Customer":
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            age = st.slider("Age", 18, 80, 35)
-            tenure = st.slider("Tenure (months)", 1, 72, 12)
+            age             = st.slider("Age", 18, 80, 35)
+            tenure          = st.slider("Tenure (months)", 1, 72, 12)
             monthly_charges = st.slider("Monthly Charges ($)", 20, 120, 59)
-            contract_type = st.selectbox("Contract Type", ["Monthly", "Yearly", "Two-year"])
+            contract_type   = st.selectbox("Contract Type", ["Monthly", "Yearly", "Two-year"])
 
         with col2:
-            plan = st.selectbox("Subscription Plan", ["Basic", "Standard", "Premium"])
+            plan          = st.selectbox("Subscription Plan", ["Basic", "Standard", "Premium"])
             support_calls = st.slider("Support Calls", 0, 15, 2)
-            complaints = st.slider("Complaints", 0, 8, 0)
-            app_rating = st.slider("App Rating", 1.0, 5.0, 3.5, step=0.1)
+            complaints    = st.slider("Complaints", 0, 8, 0)
+            app_rating    = st.slider("App Rating", 1.0, 5.0, 3.5, step=0.1)
 
         with col3:
-            usage_hours = st.slider("Monthly Usage Hours", 0, 150, 40)
-            login_freq = st.slider("Login Frequency", 0, 60, 15)
+            usage_hours      = st.slider("Monthly Usage Hours", 0, 150, 40)
+            login_freq       = st.slider("Login Frequency", 0, 60, 15)
             last_interaction = st.slider("Days Since Last Interaction", 1, 365, 30)
-            auto_pay = st.selectbox("AutoPay", ["Yes", "No"])
+            auto_pay         = st.selectbox("AutoPay", ["Yes", "No"])
 
         selected_model = st.selectbox("Choose Model", list(models.keys()))
 
         if st.button("🔮 Predict Churn", use_container_width=True):
-            # Build feature vector to match training columns
-            X_test_ref = pd.read_csv("data/X_test.csv")
+            X_test_ref   = pd.read_csv("data/X_test.csv")
             feature_cols = X_test_ref.columns.tolist()
 
-            total_charges = monthly_charges * tenure
-            feature_usage = 55.0
-            discount = 0
-            renewal_reminder = 1
-            upgrade_attempts = 0
-            income = 55000
-            dependents = 1
-
-            # Engineer features
+            total_charges    = monthly_charges * tenure
+            feature_usage    = 55.0
             avg_monthly_spend = total_charges / max(tenure, 1)
-            usage_per_day = usage_hours / 30
+            usage_per_day    = usage_hours / 30
             support_call_rate = support_calls / max(tenure, 1)
-            complaint_rate = complaints / max(tenure, 1)
+            complaint_rate   = complaints / max(tenure, 1)
             engagement_score = login_freq * 0.3 + feature_usage * 0.4 + app_rating * 10 * 0.3
 
-            row = {col: 0 for col in feature_cols}
-            # Fill numeric
+            row = {c: 0 for c in feature_cols}
             for k, v in {
-                "Age": age, "Income": income, "Dependents": dependents,
+                "Age": age, "Income": 55000, "Dependents": 1,
                 "Tenure": tenure, "MonthlyCharges": monthly_charges,
                 "TotalCharges": total_charges, "MonthlyUsageHours": usage_hours,
                 "LoginFrequency": login_freq, "FeatureUsageScore": feature_usage,
                 "CustomerSupportCalls": support_calls, "ServiceComplaints": complaints,
                 "AppRating": app_rating, "LastInteractionDays": last_interaction,
-                "UpgradeAttempts": upgrade_attempts,
+                "UpgradeAttempts": 0,
                 "AutoPay": 1 if auto_pay == "Yes" else 0,
-                "DiscountReceived": discount,
-                "ContractRenewalReminder": renewal_reminder,
+                "DiscountReceived": 0, "ContractRenewalReminder": 1,
                 "AverageMonthlySpend": avg_monthly_spend,
                 "UsagePerDay": usage_per_day,
                 "SupportCallRate": support_call_rate,
@@ -355,17 +423,16 @@ elif page == "🎯 Predict Single Customer":
                 if k in row:
                     row[k] = v
 
-            # One-hot
-            for col in feature_cols:
-                if col == f"ContractType_{contract_type}":    row[col] = 1
-                if col == f"SubscriptionPlan_{plan}":         row[col] = 1
-                if col == "Gender_Male":                      row[col] = 1
-                if col == "MaritalStatus_Single":             row[col] = 1
-                if col == "PaymentMethod_Credit Card":        row[col] = 1
+            for c in feature_cols:
+                if c == f"ContractType_{contract_type}":  row[c] = 1
+                if c == f"SubscriptionPlan_{plan}":        row[c] = 1
+                if c == "Gender_Male":                     row[c] = 1
+                if c == "MaritalStatus_Single":            row[c] = 1
+                if c == "PaymentMethod_Credit Card":       row[c] = 1
 
-            X_input = pd.DataFrame([row])[feature_cols]
+            X_input  = pd.DataFrame([row])[feature_cols]
             model_obj, uses_scaled = models[selected_model]
-            X_final = scaler.transform(X_input) if uses_scaled else X_input
+            X_final  = scaler.transform(X_input) if uses_scaled else X_input
 
             if selected_model == "Linear Regression":
                 prob = float(np.clip(model_obj.predict(X_final)[0], 0, 1))
@@ -373,7 +440,7 @@ elif page == "🎯 Predict Single Customer":
                 prob = float(model_obj.predict_proba(X_final)[0][1])
 
             churn = prob >= 0.5
-            risk = "🔴 HIGH" if prob > 0.7 else ("🟡 MEDIUM" if prob > 0.4 else "🟢 LOW")
+            risk  = "🔴 HIGH" if prob > 0.7 else ("🟡 MEDIUM" if prob > 0.4 else "🟢 LOW")
 
             st.divider()
             r1, r2, r3 = st.columns(3)
