@@ -1,0 +1,5 @@
+Cluster,CustomerCount,ChurnRate,AvgTenure,AvgMonthlyCharges,AvgSupportCalls,AvgAppRating,Label
+0,2482,0.162,22.77,98.993,1.526,3.493,High-Value Customers
+1,1976,0.17,23.089,29.21,1.499,3.458,Churn-Risk Customers
+2,2033,0.152,22.066,29.1,1.491,3.505,Loyal Customers
+3,3509,0.162,21.968,58.911,1.512,3.468,High-Value Customers
